@@ -1,0 +1,28 @@
+# Credentials (never commit)
+secrets.h
+**/secrets.h
+
+# Arduino IDE build artifacts
+build/
+*.elf
+*.bin
+*.hex
+*.map
+*.o
+*.d
+*.a
+
+# Arduino IDE caches
+.cache/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
