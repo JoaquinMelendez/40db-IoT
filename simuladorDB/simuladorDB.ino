@@ -10,10 +10,11 @@
   const char* SENSOR_ID = "d7d62fcc-24a1-42f9-b0e7-8c5952659852";
 
   // ─── WiFi (tu red) ──────────────────────────────────────────
+  // ⚠️ COMPLETAR antes de flashear
   const char* WIFI_SSID = "nombre de la red";
   const char* WIFI_PASS = "contraseña de la red";
 
-  // ─── MQTT HiveMQ Cloud ──────────────────────────────────────
+// ─── MQTT HiveMQ Cloud ──────────────────────────────────────
   const char* MQTT_BROKER = "...s1.eu.hivemq.cloud";
   const int   MQTT_PORT   = 8883;
   const char* MQTT_USER   = "40db-sensor";
@@ -24,46 +25,37 @@
   WiFiClientSecure wifiClient;
   PubSubClient mqtt(wifiClient);
 
-  // ─── Sensor KY-038 (micrófono analógico) ────────────────────
-  const int MIC_PIN = 34;                       // ADC1_CH6, input-only
-  const unsigned long SAMPLE_WINDOW_MS = 50;    // ventana para medir amplitud
-  const int AMP_MIN = 0;                        // amplitud → 30 dB
-  const int AMP_MAX = 1000;                     // amplitud → 100 dB
-  const float DB_MIN = 30.0;
-  const float DB_MAX = 100.0;
+  // ═══ SIM: parámetros del random walk ════════════════════════
+  // Estado persistente entre lecturas (modulado por random walk).
+  static float current_db = 55.0;          // baseline urbano de día
+  const float BASELINE_DB     = 55.0;       // valor al que el walk tiende a volver
+  const float DRIFT_MAX_DB    = 2.0;        // variación máxima por lectura
+  const float PULL_STRENGTH   = 0.10;       // 10% pull hacia baseline cada lectura
+  const float MIN_DB          = 38.0;       // ambiente muy silencioso
+  const float MAX_DB          = 92.0;       // ruido fuerte (claxon, obra cerca)
+  const int   EVENT_HIGH_PCT  = 5;          // 5% chance de evento alto por lectura
+  const int   EVENT_LOW_PCT   = 5;          // 5% chance de evento silencioso
 
-  // ─── Mapeo float ────────────────────────────────────────────
-  float floatMap(float x, float in_min, float in_max, float out_min, float out_max) {
-    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-  }
+  // ═══ SIM: generador de nivel_db pseudoaleatorio ═════════════
+  float generateFakeDb() {
+    int roll = random(0, 100);
 
-  // ─── Medición de amplitud (pico-pico) ───────────────────────
-  int measureAmplitude() {
-    int minVal = 4095;
-    int maxVal = 0;
-    unsigned long start = millis();
-    while (millis() - start < SAMPLE_WINDOW_MS) {
-      int v = analogRead(MIC_PIN);
-      if (v < minVal) minVal = v;
-      if (v > maxVal) maxVal = v;
+    if (roll < EVENT_HIGH_PCT) {
+      // Evento alto: claxon/obra. 75-90 dB, salto puntual.
+      current_db = random(75, 91);
+    } else if (roll < EVENT_HIGH_PCT + EVENT_LOW_PCT) {
+      // Evento silencioso: noche tranquila. 40-50 dB.
+      current_db = random(40, 51);
+    } else {
+      // Random walk suave: drift aleatorio + pull hacia baseline.
+      float drift = (random(-100, 101) / 100.0) * DRIFT_MAX_DB;
+      float pull = (BASELINE_DB - current_db) * PULL_STRENGTH;
+      current_db += drift + pull;
     }
-    return maxVal - minVal;
-  }
 
-  // ─── Lectura real del micrófono → dB ────────────────────────
-  float readMicDb() {
-    int amplitude = measureAmplitude();
-    float db = floatMap(amplitude, AMP_MIN, AMP_MAX, DB_MIN, DB_MAX);
-    if (db < DB_MIN) db = DB_MIN;
-    if (db > DB_MAX) db = DB_MAX;
-
-    Serial.print("amp=");
-    Serial.print(amplitude);
-    Serial.print(" → ");
-    Serial.print(db);
-    Serial.println(" dB");
-
-    return db;
+    if (current_db < MIN_DB) current_db = MIN_DB;
+    if (current_db > MAX_DB) current_db = MAX_DB;
+    return current_db;
   }
 
   // ─── WiFi ───────────────────────────────────────────────────
@@ -129,8 +121,10 @@
 
   void setup() {
     Serial.begin(9600);
-    analogReadResolution(12);
     MQTT_TOPIC = String("40db/sensores/") + SENSOR_ID + "/lectura";
+
+    // SIM: semilla del PRNG con algo cambiante para que cada arranque sea distinto
+    randomSeed(micros());
 
     connectWifi();
     syncTime();
@@ -144,7 +138,14 @@
     if (!mqtt.connected()) connectMqtt();
     mqtt.loop();
 
-    float db = readMicDb();
+    // ═══ SIM: en vez de leer el micrófono físico, generar valor pseudoaleatorio
+    float db = generateFakeDb();
+/// ═══════════════════════════════════════════════════════════════════════
+
+    Serial.print("SIM db=");
+    Serial.print(db);
+    Serial.println(" dB");
+
     publishReading(db);
 
     delay(5000);   // 5s
